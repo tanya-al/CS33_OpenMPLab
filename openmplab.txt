@@ -1,0 +1,143 @@
+Tanya Al-Rehani
+604593556
+
+First, I downloaded the .tgz from ccle then used tar -zxvf openmplab.tgz. 
+Testing it with
+	$make seq
+	$./seq
+gives
+	FUNC TIME : 0.477003
+	TOTAL TIME : 2.693129
+Then,
+	$make seq GPROF=1
+	$make check
+	gcc -o omp  -O3 -fopenmp filter.c main.c func.c util.c -lm
+	cp omp filter
+	./filter
+	FUNC TIME : 0.516098
+	TOTAL TIME : 2.541020
+	diff --brief correct.txt output.txt
+will generate the executable with GPROF enabled and create filter.
+	$ gprof filter
+will give the following gprof output. 
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total           
+ time   seconds   seconds    calls  ms/call  ms/call  name    
+ 59.76      0.37     0.37       80     4.63     5.29  func1
+ 19.38      0.49     0.12  5177344     0.00     0.00  func2
+  8.08      0.54     0.05       17     2.95     8.67  func4
+  4.85      0.57     0.03   491520     0.00     0.00  addSeed
+  3.23      0.59     0.02        2    10.01    79.39  func5
+  1.62      0.60     0.01       16     0.63     0.63  func0
+  1.62      0.61     0.01                             filter
+  1.62      0.62     0.01                             rand2
+  0.00      0.62     0.00        1     0.00     0.00  func3
+
+showing that func1, func2, and func4 are taking the most time to run and we should focus our efforts here.
+
+		     Call graph (explanation follows)
+
+
+granularity: each sample hit covers 2 byte(s) for 1.61% of 0.62 seconds
+
+index % time    self  children    called     name
+                                                 <spontaneous>
+[1]     85.6    0.01    0.52                 filter [1]
+                0.37    0.05      80/80          func1 [2]
+                0.01    0.07       1/2           func5 [3]
+                0.01    0.00      16/16          func0 [8]
+                0.00    0.01       1/17          func4 [4]
+-----------------------------------------------
+                              983040             func1 [2]
+                0.37    0.05      80/80          filter [1]
+[2]     68.2    0.37    0.05      80+983040  func1 [2]
+                0.03    0.00  491520/491520      addSeed [7]
+                0.02    0.00  983040/5177344     func2 [5]
+                              983040             func1 [2]
+-----------------------------------------------
+                0.01    0.07       1/2           filter [1]
+                0.01    0.07       1/2           rand2 [6]
+[3]     25.6    0.02    0.14       2         func5 [3]
+                0.05    0.09      16/17          func4 [4]
+-----------------------------------------------
+                0.00    0.01       1/17          filter [1]
+                0.05    0.09      16/17          func5 [3]
+[4]     23.7    0.05    0.10      17         func4 [4]
+                0.10    0.00 4194304/5177344     func2 [5]
+-----------------------------------------------
+                0.02    0.00  983040/5177344     func1 [2]
+                0.10    0.00 4194304/5177344     func4 [4]
+[5]     19.4    0.12    0.00 5177344         func2 [5]
+-----------------------------------------------
+                                                 <spontaneous>
+[6]     14.4    0.01    0.08                 rand2 [6]
+                0.01    0.07       1/2           func5 [3]
+-----------------------------------------------
+                0.03    0.00  491520/491520      func1 [2]
+[7]      4.8    0.03    0.00  491520         addSeed [7]
+                0.00    0.00       1/1           func3 [9]
+-----------------------------------------------
+                0.01    0.00      16/16          filter [1]
+[8]      1.6    0.01    0.00      16         func0 [8]
+-----------------------------------------------
+                0.00    0.00       1/1           addSeed [7]
+[9]      0.0    0.00    0.00       1         func3 [9]
+-----------------------------------------------
+
+The above graph given by gprof tells us that we spent the most time in the func1 function called by filter.
+
+Now, go into func.c and modify it as follows to use OpenMP and get a speedup.
+I inclued the omp.h at the top to access OpenMP, then #pragma omp parallel num_threads(32) for the functions that take a lot of time.
+
+Use 
+	$make clean
+	$make omp
+	$./omp
+	FUNC TIME : 0.445591
+	TOTAL TIME : 2.492385 
+I got a 0.02 second speedup on func time and 0.05 overall when I tested just parallelizing the first for loop in func1.
+
+After parallelizing the second loop in func1, I got
+	FUNC TIME : 0.327730
+	TOTAL TIME : 2.302662
+or a 1.2x speed up. Try 16 threads (0.3539). 22 (0.352216)  23 (0.3507) 25 (0.350388)
+
+Once I added the firstprivate and private bits to omp for with 16 threads, I get 0.207685, or a 2.29676x speedup.
+
+After changing the first for loop to use for instead of writing it myself, I got 0.166917, or a 2.8577x speedup.
+
+Then, I realized the second for loop didn't have num_threads specified, so I set that to 16 threads as well. This gave a 0.077617 func time, for a speedup of 6.14559955x. 
+
+Next, I parallelized func0 and func5 and got a func time of 0.052578 and a 9.07229259386x speedup. 
+
+At this point, gprof outputs this:
+
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total           
+ time   seconds   seconds    calls  ms/call  ms/call  name    
+ 93.67      0.58     0.58        5   116.16   122.17  filter
+  4.85      0.61     0.03   491520     0.00     0.00  func4
+  1.62      0.62     0.01                             func2
+
+As we can see, most of the time is now spent in filter. 
+
+Finally, I parallelized func4 and func2 for FUNC TIME : 0.037568 and 12.6970560051x speedup. 
+
+gprof outputs:
+
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total           
+ time   seconds   seconds    calls  ms/call  ms/call  name    
+100.14      0.62     0.62        3   206.95   206.95  filter
+
+I think I'll stop here...
+
+**These numbers were achieved using lnxsrv09, but piazza just told me 07 will be used for grading. On 07 I have about 0.057 average runtime just using make omp and ./omp.**
+
+Note: We were also told to ignore memory leaks. I get approx the same number of memory leaks as there are num_threads defined, probably due to the new version of OpenMP issue that was brought up.
+
